@@ -1,0 +1,173 @@
+@host = http://localhost:5119
+# Scenarios voor het assessment
+# Voor Docker: wijzig host naar http://localhost:8080.
+# Voer op volgorde uit.
+
+### 1. Ziekenhuis A maakt een verwijzing aan 
+POST {{host}}/api/referrals
+Content-Type: application/json
+
+{
+  "patientBsn": "999999990",
+  "patientName": "Demo Patiënt",
+  "patientDateOfBirth": "1940-01-01",
+  "senderOrganizationId": "ziekenhuis-a",
+  "receiverOrganizationId": "verpleeghuis-b",
+  "reason": "Revalidatie na opname.",
+  "referralLetter": {
+    "title": "Verwijsbrief",
+    "fileName": "verwijsbrief.pdf",
+    "fileBase64": "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA1OTUgODQyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA0IDAgUiA+PiA+PiAvQ29udGVudHMgNSAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iago1IDAgb2JqCjw8IC9MZW5ndGggMTcyID4+CnN0cmVhbQpCVAovRjEgMTIgVGYKNTAgNzUwIFRkCjE4IFRMCihWZXJ3aWpzYnJpZWYgLSBaaWVrZW5odWlzIEEgbmFhciBWZXJwbGVlZ2h1aXMgQikgVGoKVCogKFBhdGllbnQ6IERlbW8gUGF0aWVudCBcKEJTTjogOTk5OTk5OTkwXCkpIFRqClQqIChSZWRlbjogUmV2YWxpZGF0aWUgbmEgb3BuYW1lLikgVGoKRVQKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyNDEgMDAwMDAgbiAKMDAwMDAwMDMxMSAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDYgL1Jvb3QgMSAwIFIgPj4Kc3RhcnR4cmVmCjUzMwolJUVPRgo="
+  },
+  "allergyInformation": {
+    "title": "Allergie-informatie",
+    "hasKnownAllergies": true,
+    "summary": "Penicilline allergie.",
+    "allergies": [
+      {
+        "substance": "Penicilline",
+        "reaction": "Huiduitslag",
+        "severity": "Moderate",
+        "notes": "Vastgesteld in 2021."
+      }
+    ]
+  }
+}
+
+> {%
+    client.assert(response.status === 201, "Verwijzing aanmaken moet 201 geven.");
+    client.global.set("referralId", response.body.id);
+    client.global.set("referralLetterDocId", response.body.documents[0].id);
+%}
+
+### 2. Verpleeghuis B bekijkt zijn binnenkomende verwijzingen
+GET {{host}}/api/organizations/verpleeghuis-b/referrals
+Accept: application/json
+
+### 3. Verpleeghuis B haalt de verwijzing en de bijbehorende documenten op
+GET {{host}}/api/referrals/{{referralId}}
+Accept: application/json
+
+### 3b. Verpleeghuis B downloadt de verwijsbrief als PDF
+GET {{host}}/api/documents/{{referralLetterDocId}}/file
+
+### 4. (Optioneel) Ziekenhuis A voegt een extra tekstdocument toe aan de openstaande verwijzing
+POST {{host}}/api/referrals/{{referralId}}/documents
+Content-Type: application/json
+
+{
+  "type": "Other",
+  "title": "Overdrachtgegevens",
+  "content": "Patiënt mobiliseert zelfstandig met rollator."
+}
+
+> {%
+    client.assert(response.status === 201, "Extra document toevoegen moet 201 geven.");
+%}
+
+### 5. Verpleeghuis B vraagt het medicatieoverzicht op bij Ziekenhuis A
+POST {{host}}/api/referrals/{{referralId}}/information-requests
+Content-Type: application/json
+
+{
+  "requestedDocumentType": "MedicationOverview",
+  "notes": "Graag het actuele medicatieoverzicht voor de overdracht."
+}
+
+> {%
+    client.assert(response.status === 201, "Informatieverzoek aanmaken moet 201 geven.");
+    client.global.set("informationRequestId", response.body.id);
+%}
+
+### 6. Ziekenhuis A bekijkt openstaande informatieverzoeken
+GET {{host}}/api/organizations/ziekenhuis-a/information-requests?status=Pending
+Accept: application/json
+
+### 7a. Ziekenhuis A beantwoordt het verzoek met een PDF-bestand (multipart/form-data)
+POST {{host}}/api/information-requests/{{informationRequestId}}/response/file
+Content-Type: multipart/form-data; boundary=boundary123
+
+--boundary123
+Content-Disposition: form-data; name="title"
+
+Actueel medicatieoverzicht (PDF)
+--boundary123
+Content-Disposition: form-data; name="file"; filename="medicatieoverzicht.pdf"
+Content-Type: application/pdf
+
+< ./testdata/medicatieoverzicht.pdf
+--boundary123--
+
+> {%
+    client.assert(response.status === 200, "Verzoek beantwoorden moet 200 geven.");
+    client.global.set("medicationDocId", response.body.fulfilledDocumentId);
+%}
+
+### 7b. Ziekenhuis A beantwoordt een verzoek met tekst
+# Geeft 409 Conflict als stap 7a al is uitgevoerd voor hetzelfde verzoek
+POST {{host}}/api/information-requests/{{informationRequestId}}/response
+Content-Type: application/json
+
+{
+  "title": "Fictief medicatieoverzicht",
+  "content": "Demonstratie: deze fictieve patiënt gebruikt geen medicatie."
+}
+
+### 8. Verpleeghuis B haalt de verwijzing opnieuw op (bevat nu alle documenten)
+GET {{host}}/api/referrals/{{referralId}}
+Accept: application/json
+
+### 9. Verpleeghuis B downloadt het medicatieoverzicht als bestand
+GET {{host}}/api/documents/{{medicationDocId}}/file
+
+### 10. Verpleeghuis B accepteert de verwijzing
+# Na acceptatie of afwijzing kunnen geen bestanden of verzoeken meer worden toegevoegd.
+POST {{host}}/api/referrals/{{referralId}}/accept
+Content-Type: application/json
+
+{
+  "notes": "Patiënt geaccepteerd voor revalidatieopname."
+}
+
+> {%
+    client.assert(response.status === 200, "Verwijzing accepteren moet 200 geven.");
+%}
+
+### 11. Extra document uploaden na acceptatie is geblokkeerd
+POST {{host}}/api/referrals/{{referralId}}/documents
+Content-Type: application/json
+
+{
+  "type": "Other",
+  "title": "Nagekomen notitie",
+  "content": "Dit wordt geweigerd omdat de verwijzing al geaccepteerd is."
+}
+
+### 12. Bekijk de logs voor deze verwijzing
+GET {{host}}/api/referrals/{{referralId}}/exchange-logs
+Accept: application/json
+
+### Voorbeeld foutafhandeling: Ongeldig BSN en ongeldige PDF / allergieën
+POST {{host}}/api/referrals
+Content-Type: application/json
+
+{
+  "patientBsn": "000000000",
+  "patientName": "Demo Patiënt",
+  "patientDateOfBirth": "1940-01-01",
+  "senderOrganizationId": "ziekenhuis-a",
+  "receiverOrganizationId": "verpleeghuis-b",
+  "reason": "Fictieve verwijzing.",
+  "referralLetter": {
+    "fileName": "verwijsbrief.pdf",
+    "fileBase64": "geen-geldige-base64"
+  },
+  "allergyInformation": {
+    "hasKnownAllergies": true,
+    "allergies": []
+  }
+}
+
+### Voorbeeld foutafhandeling: Onbekende verwijzing
+GET {{host}}/api/referrals/00000000-0000-0000-0000-000000000000
+Accept: application/problem+json
