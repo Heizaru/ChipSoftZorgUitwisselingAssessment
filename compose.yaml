@@ -1,0 +1,16 @@
+﻿services:
+  zorguitwisseling-api:
+    build:
+      context: .
+      dockerfile: ZorgUitwisseling.Api/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: "8080"
+      ConnectionStrings__ExchangeDatabase: "Data Source=/app/data/zorguitwisseling.db;Foreign Keys=True"
+    volumes:
+      - zorguitwisseling-data:/app/data
+
+volumes:
+  zorguitwisseling-data:
